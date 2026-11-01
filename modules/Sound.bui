@@ -1,0 +1,139 @@
+Public Function SoundSupported() As Boolean
+    #If TargetMac Then
+        Return True
+    #Else
+        Return False
+    #End If
+End Function
+
+#If TargetMac Then
+    Private Declare Function NativeClass Lib "objc" Alias "objc_getClass" (name As String) As Ptr
+    Private Declare Function Allocate Lib "Foundation" Selector "alloc" (cls As Ptr) As Ptr
+    Private Declare Function InitObject Lib "Foundation" Selector "init" (object As Ptr) As Ptr
+    Private Declare Function NewPool Lib "Foundation" Selector "new" (cls As Ptr) As Ptr
+    Private Declare Sub DrainPool Lib "Foundation" Selector "drain" (pool As Ptr)
+    Private Declare Sub ReleaseObject Lib "CoreFoundation" Alias "CFRelease" (value As Ptr)
+    Private Function NativeText(value As Ptr) As String
+        If value = Nil Then Return ""
+        Return CType(CType(value, CFStringRef), String)
+    End Function
+    Private Declare Function InitSound Lib "AppKit" Selector "initWithContentsOfFile:byReference:" (sound As Ptr, filePath As Ptr, reference As UInt8) As Ptr
+    Private Declare Function PlaySound Lib "AppKit" Selector "play" (sound As Ptr) As UInt8
+    Private Declare Function StopSound Lib "AppKit" Selector "stop" (sound As Ptr) As UInt8
+    Private Declare Function SoundPlaying Lib "AppKit" Selector "isPlaying" (sound As Ptr) As UInt8
+    Private Declare Function SoundDuration Lib "AppKit" Selector "duration" (sound As Ptr) As Double
+    Private Declare Function IsMain Lib "Foundation" Selector "isMainThread" (cls As Ptr) As UInt8
+    Private Sub RequireMain()
+        If IsMain(NativeClass("NSThread")) = 0 Then Throw New InvalidArgumentException("Audio controls require the main thread")
+    End Sub
+    Private Class SoundAudioCleanup
+        Public Shared Property Guard As Mutex = New Mutex()
+        Public Shared Property Pending As Array Of Ptr = []
+    End Class
+    Private Sub DisposeAudio(value As Ptr)
+        StopSound(value)
+        ReleaseObject(value)
+    End Sub
+    Private Sub DrainSoundAudioCleanup()
+        Dim pending As Array Of Ptr = []
+        SyncLock SoundAudioCleanup.Guard
+            pending = SoundAudioCleanup.Pending
+            SoundAudioCleanup.Pending = []
+        End SyncLock
+        For Each value As Ptr In pending
+            DisposeAudio(value)
+        Next
+    End Sub
+    Private Sub RetireAudio(value As Ptr)
+        If value = Nil Then Return
+        If IsMain(NativeClass("NSThread")) <> 0 Then
+            DisposeAudio(value)
+        Else
+            SyncLock SoundAudioCleanup.Guard
+                Array.Append(SoundAudioCleanup.Pending, value)
+            End SyncLock
+            MainThread.InvokeAsync(AddressOf DrainSoundAudioCleanup)
+        End If
+    End Sub
+#End If
+
+Private Sub ValidateText(value As String, label As String)
+    If String.Trim(value) = "" Then Throw New InvalidArgumentException(label + " is required")
+    For Each character As String In String.Chars(value)
+        If String.Asc(character) = 0 Then Throw New InvalidArgumentException(label + " contains NUL")
+    Next
+End Sub
+
+Public Class SoundPlayer
+    Private Property NativeSound As Ptr = Nil
+    Private Property Closed As Boolean = False
+    Public Sub Constructor(file As FileSystemItem)
+        If file = Nil Then Throw New InvalidArgumentException("An audio file is required")
+        ValidateText(file.NativePath, "Audio path")
+        If Not file.Exists() Then Throw New InvalidArgumentException("Audio file does not exist")
+        #If TargetMac Then
+            RequireMain()
+            Dim text As CFStringRef = CType(file.NativePath, CFStringRef)
+            Try
+                Me.NativeSound = InitSound(Allocate(NativeClass("NSSound")), text, 0)
+                If Me.NativeSound = Nil Then Throw New InvalidArgumentException("Audio file format is not supported")
+            Finally
+                ReleaseObject(text)
+            End Try
+        #Else
+            Throw New UnsupportedOperationException("Native sound requires macOS")
+        #End If
+    End Sub
+    Private Sub RequireOpen()
+        If Me.Closed Then Throw New InvalidArgumentException("Sound player is closed")
+        #If TargetMac Then
+            RequireMain()
+        #End If
+    End Sub
+    Public Property Duration As Double
+        Get
+            Me.RequireOpen()
+            #If TargetMac Then
+                Return SoundDuration(Me.NativeSound)
+            #Else
+                Return 0.0
+            #End If
+        End Get
+    End Property
+    Public Property IsPlaying As Boolean
+        Get
+            Me.RequireOpen()
+            #If TargetMac Then
+                Return SoundPlaying(Me.NativeSound) <> 0
+            #Else
+                Return False
+            #End If
+        End Get
+    End Property
+    Public Function Play() As Boolean
+        Me.RequireOpen()
+        #If TargetMac Then
+            Return PlaySound(Me.NativeSound) <> 0
+        #Else
+            Return False
+        #End If
+    End Function
+    Public Sub Stop()
+        Me.RequireOpen()
+        #If TargetMac Then
+            StopSound(Me.NativeSound)
+        #End If
+    End Sub
+    Public Sub Close()
+        If Me.Closed Then Return
+        Me.Closed = True
+        #If TargetMac Then
+            Dim value As Ptr = Me.NativeSound
+            Me.NativeSound = Nil
+            RetireAudio(value)
+        #End If
+    End Sub
+    Public Sub Destructor()
+        Me.Close()
+    End Sub
+End Class

@@ -2,7 +2,7 @@
     "schema": 1,
     "name": "sound",
     "version": "0.1.0",
-    "description": "Local audio playback, explicit native lifetimes",
+    "description": "Local audio playback",
     "platforms": [
         "arm64-apple-macos",
         "x86_64-apple-macos",

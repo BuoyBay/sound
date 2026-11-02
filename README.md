@@ -1,4 +1,4 @@
-# Local audio playback, explicit native lifetimes
+# Local audio playback
 
 `Import sound`. `New SoundPlayer(file)` loads a local supported audio file without playing it. `Duration` and `IsPlaying` are read-only; `Play()` explicitly starts sound and reports whether NSSound accepted it, `Stop()` stops, and `Close()` is final/idempotent. Creation/controls require the main thread. The player retains its native sound. Worker-thread destruction explicitly queues stop/release on the main thread. No sound plays merely by importing or constructing.
 
